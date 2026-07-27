@@ -1,16 +1,16 @@
 # XiaoMiao VPS Monitor
 
-面向学而思小喵 ESP32 掌机的 VPS 状态监控固件。项目可作为
-[bmorcelli/Launcher](https://github.com/bmorcelli/Launcher) 应用安装，与现有 Launcher
-和其他应用共存。
+面向学而思小喵 ESP32 掌机的 VPS 状态监控固件。发布包同时提供
+[bmorcelli/Launcher](https://github.com/bmorcelli/Launcher) 共存安装和完整 4 MB
+直刷安装；已有 Launcher 的设备优先使用共存包。
 
 当前支持以下监控后端：
 
 - Nezha Monitor v1：`GET /api/v1/server`
 - CF-Server-Monitor-Pro：`GET /api/server?id=...`
 
-固件已在 ESP32-WROVER-B 小喵掌机上完成实机验证，包括 Launcher 启动、NVS 配置、
-2.4 GHz Wi-Fi、HTTPS 证书校验和哪吒接口请求。
+Launcher 应用已在 ESP32-WROVER-B 小喵掌机上完成实机验证，包括 Launcher 启动、
+NVS 配置、2.4 GHz Wi-Fi、HTTPS 证书校验和哪吒接口请求。
 
 ## 功能
 
@@ -28,7 +28,7 @@
 - ESP32-WROVER-B，4 MB Flash，8 MB PSRAM
 - ST7735 128 x 160 TFT
 - 六键输入：方向键、A、B
-- bmorcelli/Launcher 多应用环境
+- 可选的 bmorcelli/Launcher 多应用环境
 - Arduino-ESP32 2.0.17 / ESP-IDF 4.4
 
 引脚配置位于 [`include/hardware.h`](include/hardware.h) 和
@@ -37,16 +37,83 @@
 
 ## 安装
 
-本项目生成的是 Launcher 应用镜像，不是 ESP32 整机固件。
+从 [v1.0.0 Release](https://github.com/sym090701/xiaomiao-vps-monitor/releases/tag/v1.0.0)
+选择与安装方式匹配的 ZIP：
 
-1. 使用 PlatformIO 编译，或从 Releases 下载 Launcher BIN。
-2. 将 `firmware.bin` 重命名为便于识别的名称并复制到 TF 卡 `/boot/`。
+| 安装方式 | 发布包 | 是否保留 Launcher | 写入方式 |
+| --- | --- | --- | --- |
+| Launcher 共存（推荐） | [`xiaomiao-vps-monitor-launcher-v1.0.0-2026-07-28.zip`](https://github.com/sym090701/xiaomiao-vps-monitor/releases/download/v1.0.0/xiaomiao-vps-monitor-launcher-v1.0.0-2026-07-28.zip) | 是 | TF 卡 `/boot/` |
+| 完整 4 MB 直刷 | [`xiaomiao-vps-monitor-direct-flash-v1.0.0-2026-07-28.zip`](https://github.com/sym090701/xiaomiao-vps-monitor/releases/download/v1.0.0/xiaomiao-vps-monitor-direct-flash-v1.0.0-2026-07-28.zip) | 否 | esptool，地址 `0x0` |
+
+两个包不能混用刷写命令。解压后先阅读包内 `README.txt`，并使用 `SHA256SUMS`
+核验内部文件。
+
+ZIP SHA256：
+
+```text
+616b3e4e6d2fcb3ca4069638f00b02c241491b3b514f2960233cc56c14c86b7a  xiaomiao-vps-monitor-launcher-v1.0.0-2026-07-28.zip
+70ad1842c3be59149516e7e483d833037a95f5264121c5c9baa39c65de2c9ddf  xiaomiao-vps-monitor-direct-flash-v1.0.0-2026-07-28.zip
+```
+
+### Launcher 共存安装
+
+1. 下载并解压 Launcher 共存包。
+2. 将 `TF-card_boot` 内的 BIN 复制到 TF 卡 `/boot/`。
 3. 开机进入 Launcher，打开 `/boot/`，选择 BIN 并确认安装。
 4. 首次启动后按屏幕提示完成配网。
 
 > [!WARNING]
-> 不要用 esptool 将应用 BIN 写入 `0x0` 或 `0x10000`。这会覆盖启动程序或 Launcher。
-> 当前实机应用槽位为 `0x110000`，构建产物必须小于该大小；其他设备以实际分区表为准。
+> 共存包中的 BIN 是应用镜像。不要用 esptool 将它写入 `0x0` 或 `0x10000`，否则会
+> 覆盖启动程序或 Launcher。当前实机所需应用槽位为 `0x110000`；其他设备以实际
+> 分区表为准。
+
+### 完整 4 MB 直刷
+
+直刷包不需要 TF 卡或 Launcher，适合把掌机专门用作 VPS 监控屏。它会覆盖 bootloader、
+分区表、NVS、Launcher、已安装应用和 Flash 内的其他数据。
+
+1. 安装 [esptool](https://docs.espressif.com/projects/esptool/en/latest/esp32/installation.html)：
+
+   ```bash
+   python3 -m pip install --user esptool
+   ```
+
+2. 先完整备份原有 4 MB Flash（将串口名替换为实际设备）：
+
+   ```bash
+   python3 -m esptool --chip esp32 --port /dev/cu.usbmodemXXXX --baud 115200 \
+     read_flash 0x0 0x400000 backup-original-4MB.bin
+   ```
+
+3. 解压直刷包，在其目录运行：
+
+   ```bash
+   ./flash.sh /dev/cu.usbmodemXXXX
+   ```
+
+   Windows 使用 `flash-windows.bat COM3`。也可以手动将
+   `XiaoMiao-VPS-Monitor-Full-4MB.bin` 写入 `0x0`；不要把其中的
+   `flash_parts/firmware.bin` 单独写入 `0x0`。
+
+4. 首次启动后按屏幕提示完成配网。
+
+恢复原备份：
+
+```bash
+python3 -m esptool --chip esp32 --port /dev/cu.usbmodemXXXX --baud 115200 \
+  write_flash --flash_size 4MB 0x0 backup-original-4MB.bin
+```
+
+> [!CAUTION]
+> 只有完整 4 MB 文件 `XiaoMiao-VPS-Monitor-Full-4MB.bin` 才能从 `0x0` 写入。
+> 刷写前确认备份文件大小为 `4194304` 字节，并将备份另存到电脑或其他磁盘。
+
+### 发布包验证状态
+
+- Launcher 应用 BIN 与本仓库 `v1.0.0` 源码构建结果一致，并已完成实机启动及哪吒后端验证。
+- 完整 4 MB 镜像已验证尺寸、组件偏移、分区表、内部 SHA256 和无预置凭据；该完整镜像
+  尚未执行破坏性的实机整片刷写。
+- CF-Server-Monitor-Pro 支持已完成源码、构建和接口契约检查，尚未记录实机后端验证。
 
 ## 首次配置
 
@@ -84,7 +151,7 @@ CF-Server-Monitor-Pro 当前没有节点列表 JSON API，显式填写 ID 更稳
 | 上 / 下 | 切换资源页、网络页 |
 | A | 立即刷新 |
 | 长按 B 1.5 秒 | 开启配置热点 |
-| 长按 A+B 1.5 秒 | 重启；随后可按 Launcher 提示返回主界面 |
+| 长按 A+B 1.5 秒 | 重启；共存安装可随后按 Launcher 提示返回主界面 |
 
 ## 编译
 
@@ -95,14 +162,14 @@ CF-Server-Monitor-Pro 当前没有节点列表 JSON API，显式填写 ID 更稳
 pio run
 ```
 
-应用镜像生成在：
+源码编译生成的是 Launcher 可安装的应用镜像：
 
 ```text
 .pio/build/xiaomiao/firmware.bin
 ```
 
-依赖版本固定在 [`platformio.ini`](platformio.ini)。构建前建议确认 BIN 小于目标 Launcher
-应用槽位：
+它不是完整 4 MB 直刷镜像，不能直接写入 `0x0`。依赖版本固定在
+[`platformio.ini`](platformio.ini)。构建前建议确认 BIN 不超过目标 Launcher 应用槽位：
 
 ```bash
 stat -f '%z bytes' .pio/build/xiaomiao/firmware.bin  # macOS
@@ -145,7 +212,8 @@ platformio.ini 固定的构建环境和依赖
   HTTPS 或后端请求阶段，而不是配网。
 - `Invalid mbox`：必须在启动 WebServer 前初始化 Arduino Wi-Fi/LwIP。
 - `TG1WDT_SYS_RESET` 出现在 `setCACertBundle()`：检查证书包是否误用了 ESP-IDF 5.x 格式。
-- 无法返回 Launcher：重启后按照 Launcher 启动画面提示按键，不要重刷整机镜像。
+- 共存安装无法返回 Launcher：重启后按照 Launcher 启动画面提示按键，不要重刷整机镜像。
+- 直刷后没有 Launcher：这是完整 4 MB 包的预期行为；如需恢复，写回刷机前的 4 MB 备份。
 
 ## 后端项目
 
