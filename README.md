@@ -9,15 +9,19 @@
 - Nezha Monitor v1：`GET /api/v1/server`
 - CF-Server-Monitor-Pro：`GET /api/server?id=...`
 
-Launcher 应用已在 ESP32-WROVER-B 小喵掌机上完成实机验证，包括 Launcher 启动、
-NVS 配置、2.4 GHz Wi-Fi、HTTPS 证书校验和哪吒接口请求。
+基础版已在 ESP32-WROVER-B 小喵掌机上完成 Launcher 启动、NVS 配置、2.4 GHz Wi-Fi、
+HTTPS 证书校验和哪吒接口实机验证。`v1.1.0` 在此基础上增加巡检交互和扩展指标；
+发布前已完成构建和镜像静态验证，实机交互验证状态见下文。
 
 ## 功能
 
-- 在 128 x 160 TFT 上显示 CPU、内存、磁盘、负载、运行时间和在线状态
-- 显示实时上下行速度、累计流量、系统和架构信息
-- 最多加载 32 台服务器
-- 左右切换节点，上下切换资源页和网络页
+- 总览最多显示 32 台服务器，明确高亮当前选择并显示在线数量
+- 显示 CPU、内存、磁盘、Swap、1/5/15 分钟负载和运行时间
+- 显示进程、TCP/UDP 连接、温度、虚拟化、实时速度和累计流量
+- CF-Server-Monitor-Pro 显示月流量、套餐额度、重置日和到期天数
+- CPU、内存、磁盘和离线状态支持持续超限本地告警
+- 配置网页可测试 Wi-Fi、URL、TLS/HTTP、认证、JSON 和节点发现，不保存配置
+- 总览与详情分离，刷新后按服务器 ID 保持当前选择
 - 使用设备热点和手机网页完成首次配置
 - Wi-Fi、面板地址和 Token 保存到 ESP32 NVS，不依赖 TF 卡数据分区
 - HTTPS 使用公共根证书包校验证书，不调用 `setInsecure()`
@@ -37,39 +41,37 @@ NVS 配置、2.4 GHz Wi-Fi、HTTPS 证书校验和哪吒接口请求。
 
 ## 安装
 
-从 [v1.0.0 Release](https://github.com/sym090701/xiaomiao-vps-monitor/releases/tag/v1.0.0)
-选择与安装方式匹配的 ZIP：
+从 [v1.1.0 Release](https://github.com/sym090701/xiaomiao-vps-monitor/releases/tag/v1.1.0)
+选择与安装方式匹配的 BIN：
 
 | 安装方式 | 发布包 | 是否保留 Launcher | 写入方式 |
 | --- | --- | --- | --- |
-| Launcher 共存（推荐） | [`xiaomiao-vps-monitor-launcher-v1.0.0-2026-07-28.zip`](https://github.com/sym090701/xiaomiao-vps-monitor/releases/download/v1.0.0/xiaomiao-vps-monitor-launcher-v1.0.0-2026-07-28.zip) | 是 | TF 卡 `/boot/` |
-| 完整 4 MB 直刷 | [`xiaomiao-vps-monitor-direct-flash-v1.0.0-2026-07-28.zip`](https://github.com/sym090701/xiaomiao-vps-monitor/releases/download/v1.0.0/xiaomiao-vps-monitor-direct-flash-v1.0.0-2026-07-28.zip) | 否 | esptool，地址 `0x0` |
+| Launcher 共存（推荐） | [`XiaoMiao-VPS-Monitor-v1.1.0-Launcher.bin`](https://github.com/sym090701/xiaomiao-vps-monitor/releases/download/v1.1.0/XiaoMiao-VPS-Monitor-v1.1.0-Launcher.bin) | 是 | TF 卡 `/boot/` |
+| 完整 4 MB 直刷 | [`XiaoMiao-VPS-Monitor-v1.1.0-Full-4MB.bin`](https://github.com/sym090701/xiaomiao-vps-monitor/releases/download/v1.1.0/XiaoMiao-VPS-Monitor-v1.1.0-Full-4MB.bin) | 否 | esptool，地址 `0x0` |
 
-两个包不能混用刷写命令。解压后先阅读包内 `README.txt`，并使用 `SHA256SUMS`
-核验内部文件。
-
-ZIP SHA256：
+两个 BIN 不能混用刷写方式。Release 同时提供 `SHA256SUMS`，下载后应先核验文件。
 
 ```text
-616b3e4e6d2fcb3ca4069638f00b02c241491b3b514f2960233cc56c14c86b7a  xiaomiao-vps-monitor-launcher-v1.0.0-2026-07-28.zip
-70ad1842c3be59149516e7e483d833037a95f5264121c5c9baa39c65de2c9ddf  xiaomiao-vps-monitor-direct-flash-v1.0.0-2026-07-28.zip
+8593144d6ce0767429302eae4ec2c9513230a4b13aab6239061f4dcb821febf8  XiaoMiao-VPS-Monitor-v1.1.0-Launcher.bin
+1ff98be69dee433389e83d041c602a6105ebb896c90bc71b4ce715fdd9c11a8b  XiaoMiao-VPS-Monitor-v1.1.0-Full-4MB.bin
 ```
 
 ### Launcher 共存安装
 
-1. 下载并解压 Launcher 共存包。
-2. 将 `TF-card_boot` 内的 BIN 复制到 TF 卡 `/boot/`。
+1. 下载 `XiaoMiao-VPS-Monitor-v1.1.0-Launcher.bin`。
+2. 将 BIN 复制到 TF 卡 `/boot/`。
 3. 开机进入 Launcher，打开 `/boot/`，选择 BIN 并确认安装。
 4. 首次启动后按屏幕提示完成配网。
 
 > [!WARNING]
 > 共存包中的 BIN 是应用镜像。不要用 esptool 将它写入 `0x0` 或 `0x10000`，否则会
-> 覆盖启动程序或 Launcher。当前实机所需应用槽位为 `0x110000`；其他设备以实际
-> 分区表为准。
+> 覆盖启动程序或 Launcher。`v1.1.0` 至少需要 `0x120000`（1152 KiB）应用槽位；
+> 当前 BIN 为 `1131904` 字节，在该槽位剩余 `47744` 字节；其他设备以实际 Launcher
+> 分区管理结果为准。
 
 ### 完整 4 MB 直刷
 
-直刷包不需要 TF 卡或 Launcher，适合把掌机专门用作 VPS 监控屏。它会覆盖 bootloader、
+完整直刷 BIN 不需要 TF 卡或 Launcher，适合把掌机专门用作 VPS 监控屏。它会覆盖 bootloader、
 分区表、NVS、Launcher、已安装应用和 Flash 内的其他数据。
 
 1. 安装 [esptool](https://docs.espressif.com/projects/esptool/en/latest/esp32/installation.html)：
@@ -85,15 +87,14 @@ ZIP SHA256：
      read_flash 0x0 0x400000 backup-original-4MB.bin
    ```
 
-3. 解压直刷包，在其目录运行：
+3. 下载完整镜像后写入 `0x0`：
 
    ```bash
-   ./flash.sh /dev/cu.usbmodemXXXX
+   python3 -m esptool --chip esp32 --port /dev/cu.usbmodemXXXX --baud 115200 \
+     write_flash --flash_size 4MB 0x0 XiaoMiao-VPS-Monitor-v1.1.0-Full-4MB.bin
    ```
 
-   Windows 使用 `flash-windows.bat COM3`。也可以手动将
-   `XiaoMiao-VPS-Monitor-Full-4MB.bin` 写入 `0x0`；不要把其中的
-   `flash_parts/firmware.bin` 单独写入 `0x0`。
+   Windows 将 `python3` 和串口名分别替换为 `py`、`COM3`。
 
 4. 首次启动后按屏幕提示完成配网。
 
@@ -105,13 +106,14 @@ python3 -m esptool --chip esp32 --port /dev/cu.usbmodemXXXX --baud 115200 \
 ```
 
 > [!CAUTION]
-> 只有完整 4 MB 文件 `XiaoMiao-VPS-Monitor-Full-4MB.bin` 才能从 `0x0` 写入。
+> 只有完整 4 MB 文件 `XiaoMiao-VPS-Monitor-v1.1.0-Full-4MB.bin` 才能从 `0x0` 写入。
 > 刷写前确认备份文件大小为 `4194304` 字节，并将备份另存到电脑或其他磁盘。
 
 ### 发布包验证状态
 
-- Launcher 应用 BIN 与本仓库 `v1.0.0` 源码构建结果一致，并已完成实机启动及哪吒后端验证。
-- 完整 4 MB 镜像已验证尺寸、组件偏移、分区表、内部 SHA256 和无预置凭据；该完整镜像
+- `v1.1.0` Launcher BIN 与本仓库标签源码构建结果一致，镜像结构和槽位尺寸已验证；
+  新交互尚未记录实体机验证。
+- 完整 4 MB 镜像已验证尺寸、组件偏移、分区表、SHA256 和无预置凭据；该完整镜像
   尚未执行破坏性的实机整片刷写。
 - CF-Server-Monitor-Pro 支持已完成源码、构建和接口契约检查，尚未记录实机后端验证。
 
@@ -123,7 +125,8 @@ python3 -m esptool --chip esp32 --port /dev/cu.usbmodemXXXX --baud 115200 \
 http://192.168.4.1
 ```
 
-填写 2.4 GHz Wi-Fi、后端类型、面板根地址、Token 和刷新间隔，保存后设备自动重启。
+填写 2.4 GHz Wi-Fi、后端类型、面板根地址、Token、刷新间隔和告警阈值，保存后设备自动重启。
+“测试当前连接”只执行诊断，不保存配置或重启，也不会回显已保存的密码和 Token。
 长按 B 约 1.5 秒可随时重新开启配置热点。
 
 ### Nezha Monitor
@@ -147,9 +150,13 @@ CF-Server-Monitor-Pro 当前没有节点列表 JSON API，显式填写 ID 更稳
 
 | 按键 | 功能 |
 | --- | --- |
-| 左 / 右 | 切换 VPS |
-| 上 / 下 | 切换资源页、网络页 |
-| A | 立即刷新 |
+| 总览：上 / 下（左 / 右也可） | 选择服务器，到首尾停止 |
+| 总览：A | 进入所选服务器详情 |
+| 总览：短按 B | 立即刷新 |
+| 详情：左 / 右 | 循环切换服务器 |
+| 详情：上 / 下 | 切换资源、网络、高级指标和可用的 CF 套餐页 |
+| 详情：A | 立即刷新 |
+| 详情：短按 B | 返回总览 |
 | 长按 B 1.5 秒 | 开启配置热点 |
 | 长按 A+B 1.5 秒 | 重启；共存安装可随后按 Launcher 提示返回主界面 |
 
@@ -162,7 +169,7 @@ CF-Server-Monitor-Pro 当前没有节点列表 JSON API，显式填写 ID 更稳
 pio run
 ```
 
-源码编译生成的是 Launcher 可安装的应用镜像：
+普通构建生成 Launcher 可安装的应用镜像：
 
 ```text
 .pio/build/xiaomiao/firmware.bin
@@ -174,6 +181,21 @@ pio run
 ```bash
 stat -f '%z bytes' .pio/build/xiaomiao/firmware.bin  # macOS
 stat -c '%s bytes' .pio/build/xiaomiao/firmware.bin  # Linux
+```
+
+同时生成发布使用的 Launcher BIN、完整 4 MB BIN 和 `SHA256SUMS`：
+
+```bash
+./scripts/build-release.sh
+```
+
+默认输出到 `dist/`。完整镜像按以下布局合并并以 `0xFF` 填充到 4 MiB：
+
+```text
+0x001000  bootloader.bin
+0x008000  partitions.bin
+0x00E000  boot_app0.bin
+0x010000  firmware.bin
 ```
 
 ## TLS 证书包
@@ -203,6 +225,7 @@ ESP-IDF 5.x 使用 32 位小端偏移表，不能直接传给此版本的 `setCA
 include/       硬件、配置和数据结构声明
 src/           显示、配网、NVS 和后端客户端实现
 data/cert/     HTTPS 公共根证书包
+scripts/       两种发布 BIN 的可复现构建脚本
 platformio.ini 固定的构建环境和依赖
 ```
 

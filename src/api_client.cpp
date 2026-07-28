@@ -58,7 +58,7 @@ bool httpGet(const String &url, const String &authorization, String &body,
     http.setTimeout(12000);
     // Never forward a monitoring credential to a redirect target.
     http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
-    http.setUserAgent("XiaoMiao-VPS-Monitor/1.0");
+    http.setUserAgent("XiaoMiao-VPS-Monitor/1.1");
 
     bool begun = false;
     WiFiClient plainClient;
@@ -115,6 +115,25 @@ uint64_t jsonUint64(JsonVariantConst value) {
     if (value.is<long long>()) return std::max<int64_t>(0, value.as<long long>());
     const char *text = value.as<const char *>();
     return text ? strtoull(text, nullptr, 10) : 0;
+}
+
+uint64_t parseByteLimit(String text) {
+    text.trim();
+    if (!text.length()) return 0;
+    text.toUpperCase();
+    char *end = nullptr;
+    const double number = strtod(text.c_str(), &end);
+    if (number <= 0) return 0;
+    while (end && (*end == ' ' || *end == '\t')) end++;
+    uint64_t multiplier = 1;
+    if (end) {
+        if (*end == 'K') multiplier = 1024ULL;
+        else if (*end == 'M') multiplier = 1024ULL * 1024;
+        else if (*end == 'G') multiplier = 1024ULL * 1024 * 1024;
+        else if (*end == 'T') multiplier = 1024ULL * 1024 * 1024 * 1024;
+        else if (*end == 'P') multiplier = 1024ULL * 1024 * 1024 * 1024 * 1024;
+    }
+    return static_cast<uint64_t>(number * multiplier);
 }
 
 int64_t parseRfc3339(const char *value) {
@@ -194,7 +213,7 @@ FetchResult fetchNezha(const AppConfig &config) {
         return result;
     }
 
-    DynamicJsonDocument filter(2048);
+    DynamicJsonDocument filter(4096);
     filter["success"] = true;
     filter["error"] = true;
     JsonObject item = filter["data"][0].to<JsonObject>();
@@ -205,6 +224,8 @@ FetchResult fetchNezha(const AppConfig &config) {
     item["host"]["arch"] = true;
     item["host"]["mem_total"] = true;
     item["host"]["disk_total"] = true;
+    item["host"]["swap_total"] = true;
+    item["host"]["virtualization"] = true;
     item["state"]["cpu"] = true;
     item["state"]["mem_used"] = true;
     item["state"]["disk_used"] = true;
@@ -214,6 +235,16 @@ FetchResult fetchNezha(const AppConfig &config) {
     item["state"]["net_out_transfer"] = true;
     item["state"]["uptime"] = true;
     item["state"]["load_1"] = true;
+    item["state"]["load_5"] = true;
+    item["state"]["load_15"] = true;
+    item["state"]["swap_used"] = true;
+    item["state"]["tcp_conn_count"] = true;
+    item["state"]["udp_conn_count"] = true;
+    item["state"]["process_count"] = true;
+    item["state"]["temperatures"][0]["Name"] = true;
+    item["state"]["temperatures"][0]["Temperature"] = true;
+    item["state"]["temperatures"][0]["name"] = true;
+    item["state"]["temperatures"][0]["temperature"] = true;
 
     const size_t capacity = std::min<size_t>(384 * 1024, std::max<size_t>(32 * 1024, body.length()));
     DynamicJsonDocument doc(capacity);
@@ -250,6 +281,21 @@ FetchResult fetchNezha(const AppConfig &config) {
         snapshot.uptimeSeconds = jsonUint64(server["state"]["uptime"]);
         snapshot.uptimeText = formatUptime(snapshot.uptimeSeconds);
         snapshot.load1 = jsonFloat(server["state"]["load_1"]);
+        snapshot.load5 = jsonFloat(server["state"]["load_5"]);
+        snapshot.load15 = jsonFloat(server["state"]["load_15"]);
+        snapshot.swapPercent = percentOf(jsonUint64(server["state"]["swap_used"]),
+                                         jsonUint64(server["host"]["swap_total"]));
+        snapshot.processCount = jsonUint64(server["state"]["process_count"]);
+        snapshot.tcpConnections = jsonUint64(server["state"]["tcp_conn_count"]);
+        snapshot.udpConnections = jsonUint64(server["state"]["udp_conn_count"]);
+        snapshot.virtualization = server["host"]["virtualization"] | "";
+        for (JsonObjectConst sensor : server["state"]["temperatures"].as<JsonArrayConst>()) {
+            const float value = sensor.containsKey("Temperature")
+                                    ? jsonFloat(sensor["Temperature"])
+                                    : jsonFloat(sensor["temperature"]);
+            snapshot.maxTemperature = std::max(snapshot.maxTemperature, value);
+        }
+        snapshot.hasAdvancedMetrics = true;
         snapshot.lastActiveEpoch = parseRfc3339(server["last_active"] | "");
         snapshot.online = isRecent(snapshot.lastActiveEpoch, config.offlineSeconds);
         result.servers.push_back(std::move(snapshot));
@@ -311,10 +357,12 @@ std::vector<String> discoverCfIds(const AppConfig &config, const String &auth, S
 
 bool parseCfServer(const String &body, uint16_t offlineSeconds, ServerSnapshot &snapshot,
                    String &error) {
-    DynamicJsonDocument filter(2048);
+    DynamicJsonDocument filter(4096);
     for (const char *key : {"id", "name", "cpu", "ram", "disk", "load_avg", "uptime",
                             "last_updated", "net_rx", "net_tx", "net_in_speed", "net_out_speed",
-                            "os", "arch"}) {
+                            "os", "arch", "swap_total", "swap_used", "processes", "tcp_conn",
+                            "udp_conn", "virt", "monthly_rx", "monthly_tx", "traffic_limit",
+                            "expire_date", "price", "server_group", "reset_day"}) {
         filter[key] = true;
     }
     DynamicJsonDocument doc(8192);
@@ -332,6 +380,30 @@ bool parseCfServer(const String &body, uint16_t offlineSeconds, ServerSnapshot &
     snapshot.memoryPercent = jsonFloat(doc["ram"]);
     snapshot.diskPercent = jsonFloat(doc["disk"]);
     snapshot.load1 = jsonFloat(doc["load_avg"]);
+    snapshot.swapPercent = percentOf(jsonUint64(doc["swap_used"]), jsonUint64(doc["swap_total"]));
+    snapshot.processCount = jsonUint64(doc["processes"]);
+    snapshot.tcpConnections = jsonUint64(doc["tcp_conn"]);
+    snapshot.udpConnections = jsonUint64(doc["udp_conn"]);
+    snapshot.virtualization = doc["virt"] | "";
+    snapshot.monthlyNetIn = jsonUint64(doc["monthly_rx"]);
+    snapshot.monthlyNetOut = jsonUint64(doc["monthly_tx"]);
+    snapshot.trafficLimitText = doc["traffic_limit"] | "";
+    snapshot.trafficLimitBytes = parseByteLimit(snapshot.trafficLimitText);
+    snapshot.expiryDate = doc["expire_date"] | "";
+    if (snapshot.expiryDate.length() >= 10 && time(nullptr) >= 1700000000) {
+        const String expiryTimestamp = snapshot.expiryDate.substring(0, 10) + "T00:00:00Z";
+        const int64_t expiryEpoch = parseRfc3339(expiryTimestamp.c_str());
+        if (expiryEpoch > 0) {
+            snapshot.expiryDays = static_cast<int32_t>((expiryEpoch - time(nullptr)) / 86400);
+        }
+    }
+    snapshot.price = doc["price"] | "";
+    snapshot.serverGroup = doc["server_group"] | "";
+    snapshot.trafficResetDay = constrain(static_cast<int>(jsonUint64(doc["reset_day"])), 0, 31);
+    snapshot.hasAdvancedMetrics = true;
+    snapshot.hasPlanMetrics = snapshot.monthlyNetIn || snapshot.monthlyNetOut ||
+                              snapshot.trafficLimitText.length() || snapshot.expiryDate.length() ||
+                              snapshot.price.length();
     snapshot.uptimeText = doc["uptime"] | "";
     snapshot.netInSpeed = jsonUint64(doc["net_in_speed"]);
     snapshot.netOutSpeed = jsonUint64(doc["net_out_speed"]);
@@ -403,4 +475,42 @@ FetchResult fetchServerSnapshots(const AppConfig &config) {
     }
     if (config.backend == BackendType::CfServerMonitor) return fetchCf(config);
     return fetchNezha(config);
+}
+
+ConnectionTestResult testServerConnection(const AppConfig &config) {
+    ConnectionTestResult test;
+    if (WiFi.status() != WL_CONNECTED) {
+        test.stages.push_back("FAIL Wi-Fi not connected");
+        return test;
+    }
+    test.stages.push_back("OK Wi-Fi " + WiFi.localIP().toString());
+
+    if (!config.baseUrl.startsWith("https://") && !config.baseUrl.startsWith("http://")) {
+        test.stages.push_back("FAIL URL scheme must be HTTP or HTTPS");
+        return test;
+    }
+    test.stages.push_back(config.baseUrl.startsWith("https://") ? "OK HTTPS URL" : "WARN plaintext HTTP URL");
+
+    FetchResult fetched = fetchServerSnapshots(config);
+    if (!fetched.success) {
+        if (fetched.error.startsWith("network:") || fetched.error.indexOf("disconnected") >= 0) {
+            test.stages.push_back("FAIL connection/TLS: " + fetched.error);
+        } else if (fetched.error.indexOf("rejected") >= 0 || fetched.error.indexOf("HTTP 401") >= 0 ||
+                   fetched.error.indexOf("HTTP 403") >= 0) {
+            test.stages.push_back("OK server reached");
+            test.stages.push_back("FAIL authentication: " + fetched.error);
+        } else if (fetched.error.indexOf("JSON") >= 0) {
+            test.stages.push_back("OK HTTP response");
+            test.stages.push_back("FAIL JSON parsing: " + fetched.error);
+        } else {
+            test.stages.push_back("FAIL API: " + fetched.error);
+        }
+        return test;
+    }
+
+    test.stages.push_back("OK HTTP and authentication");
+    test.stages.push_back("OK JSON parsed");
+    test.stages.push_back("OK nodes " + String(fetched.servers.size()));
+    test.success = !fetched.servers.empty();
+    return test;
 }
