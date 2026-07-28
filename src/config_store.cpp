@@ -23,10 +23,18 @@ bool loadConfig(AppConfig &config) {
     config.cfServerIds = prefs.getString("cf_ids", "");
     config.refreshSeconds = prefs.getUShort("refresh", 15);
     config.offlineSeconds = prefs.getUShort("offline", 90);
+    config.cpuAlertPercent = prefs.getUChar("alert_cpu", 90);
+    config.memoryAlertPercent = prefs.getUChar("alert_mem", 90);
+    config.diskAlertPercent = prefs.getUChar("alert_dsk", 90);
+    config.alertDurationSeconds = prefs.getUShort("alert_sec", 60);
     prefs.end();
 
     config.refreshSeconds = constrain(config.refreshSeconds, 5, 3600);
     config.offlineSeconds = constrain(config.offlineSeconds, 15, 3600);
+    config.cpuAlertPercent = constrain(config.cpuAlertPercent, 0, 100);
+    config.memoryAlertPercent = constrain(config.memoryAlertPercent, 0, 100);
+    config.diskAlertPercent = constrain(config.diskAlertPercent, 0, 100);
+    config.alertDurationSeconds = constrain(config.alertDurationSeconds, 15, 3600);
     return config.isComplete();
 }
 
@@ -55,6 +63,10 @@ bool saveConfig(const AppConfig &config) {
     }
     ok &= prefs.putUShort("refresh", constrain(config.refreshSeconds, 5, 3600)) == 2;
     ok &= prefs.putUShort("offline", constrain(config.offlineSeconds, 15, 3600)) == 2;
+    ok &= prefs.putUChar("alert_cpu", constrain(config.cpuAlertPercent, 0, 100)) == 1;
+    ok &= prefs.putUChar("alert_mem", constrain(config.memoryAlertPercent, 0, 100)) == 1;
+    ok &= prefs.putUChar("alert_dsk", constrain(config.diskAlertPercent, 0, 100)) == 1;
+    ok &= prefs.putUShort("alert_sec", constrain(config.alertDurationSeconds, 15, 3600)) == 2;
     prefs.end();
     return ok;
 }

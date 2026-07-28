@@ -1,6 +1,7 @@
 #include "monitor_display.h"
 
 #include <TFT_eSPI.h>
+#include <algorithm>
 #include <time.h>
 
 namespace {
@@ -30,8 +31,10 @@ void drawFooter(uint8_t page, const String &notice) {
     tft.setCursor(3, 118);
     if (notice.length()) {
         tft.print(clipped(notice, 25));
+    } else if (page == 0) {
+        tft.print("UD:N  A:OPEN  B:REF");
     } else {
-        tft.printf("<> NODE  ^v PAGE %u  A REF", page + 1);
+        tft.print("LR:N UD:P A:REF B:BACK");
     }
 }
 
@@ -143,6 +146,111 @@ void drawNetwork(const ServerSnapshot &snapshot) {
     tft.setCursor(5, 103);
     tft.print(clipped(host.length() ? host : "Host details unavailable", 25));
 }
+
+void drawOverview(const std::vector<ServerSnapshot> &snapshots, size_t selected) {
+    size_t online = 0;
+    for (const auto &snapshot : snapshots) online += snapshot.online ? 1 : 0;
+
+    tft.fillRect(0, 0, 160, 18, TFT_NAVY);
+    tft.setTextColor(TFT_WHITE, TFT_NAVY);
+    tft.setCursor(5, 4);
+    tft.print("FLEET OVERVIEW");
+    tft.setTextColor(online == snapshots.size() ? TFT_GREEN : TFT_YELLOW, TFT_NAVY);
+    tft.setCursor(124, 4);
+    tft.printf("%u/%u", static_cast<unsigned>(online), static_cast<unsigned>(snapshots.size()));
+
+    const size_t visible = std::min<size_t>(5, snapshots.size());
+    size_t first = 0;
+    if (snapshots.size() > visible && selected >= visible) first = selected - visible + 1;
+    for (size_t row = 0; row < visible; row++) {
+        const size_t nodeIndex = first + row;
+        const ServerSnapshot &node = snapshots[nodeIndex];
+        const int y = 24 + row * 17;
+        const bool isSelected = nodeIndex == selected;
+        const uint16_t background = isSelected ? TFT_DARKGREY : TFT_BLACK;
+        if (isSelected) tft.fillRect(0, y - 2, 160, 13, background);
+        tft.setTextColor(TFT_CYAN, background);
+        tft.setCursor(4, y);
+        tft.print(isSelected ? ">" : " ");
+        tft.setTextColor(node.online ? TFT_GREEN : TFT_RED, background);
+        tft.setCursor(12, y);
+        tft.print(node.online ? "+" : "!");
+        tft.setTextColor(TFT_WHITE, background);
+        tft.setCursor(22, y);
+        tft.print(clipped(node.name, 12));
+        tft.setTextColor(TFT_LIGHTGREY, background);
+        tft.setCursor(99, y);
+        if (node.online) {
+            const float worst = std::max(node.cpuPercent, std::max(node.memoryPercent, node.diskPercent));
+            tft.printf("%3.0f%%", worst);
+        } else {
+            tft.print("OFF");
+        }
+    }
+    tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+    tft.setCursor(4, 108);
+    tft.printf("SELECT %u/%u", static_cast<unsigned>(selected + 1), static_cast<unsigned>(snapshots.size()));
+}
+
+void drawAdvanced(const ServerSnapshot &snapshot) {
+    tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+    tft.setCursor(5, 27); tft.print("LOAD 1/5/15");
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.setCursor(5, 40); tft.printf("%.2f  %.2f  %.2f", snapshot.load1, snapshot.load5, snapshot.load15);
+
+    tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+    tft.setCursor(5, 58); tft.print("SWAP");
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.setCursor(43, 58); tft.printf("%.1f%%", snapshot.swapPercent);
+    tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+    tft.setCursor(92, 58); tft.print("TEMP");
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.setCursor(126, 58);
+    if (snapshot.maxTemperature > 0) tft.printf("%.0fC", snapshot.maxTemperature);
+    else tft.print("--");
+
+    tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+    tft.setCursor(5, 76); tft.print("PROC");
+    tft.setCursor(62, 76); tft.print("TCP");
+    tft.setCursor(112, 76); tft.print("UDP");
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.setCursor(5, 89); tft.print(snapshot.processCount);
+    tft.setCursor(62, 89); tft.print(snapshot.tcpConnections);
+    tft.setCursor(112, 89); tft.print(snapshot.udpConnections);
+
+    tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+    tft.setCursor(5, 105); tft.print("VIRT ");
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.print(clipped(snapshot.virtualization.length() ? snapshot.virtualization : "--", 18));
+}
+
+void drawPlan(const ServerSnapshot &snapshot) {
+    const uint64_t used = snapshot.monthlyNetIn + snapshot.monthlyNetOut;
+    tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+    tft.setCursor(5, 27); tft.print("MONTH RX");
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.setCursor(67, 27); tft.print(formatBytes(snapshot.monthlyNetIn));
+    tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+    tft.setCursor(5, 43); tft.print("MONTH TX");
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.setCursor(67, 43); tft.print(formatBytes(snapshot.monthlyNetOut));
+    tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+    tft.setCursor(5, 59); tft.print("QUOTA");
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.setCursor(67, 59);
+    tft.print(snapshot.trafficLimitBytes ? formatBytes(snapshot.trafficLimitBytes) : clipped(snapshot.trafficLimitText.length() ? snapshot.trafficLimitText : "--", 14));
+    if (snapshot.trafficLimitBytes) {
+        drawBar(76, "USE", std::min(100.0f, static_cast<float>(used) * 100.0f / snapshot.trafficLimitBytes), TFT_MAGENTA);
+    }
+    tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+    tft.setCursor(5, 94); tft.print("EXPIRE");
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.setCursor(54, 94); tft.print(clipped(snapshot.expiryDate.length() ? snapshot.expiryDate : "--", 17));
+    tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+    tft.setCursor(5, 107);
+    if (snapshot.expiryDays != INT32_MIN) tft.printf("LEFT %ldd  RESET %u", static_cast<long>(snapshot.expiryDays), snapshot.trafficResetDay);
+    else tft.printf("LEFT --  RESET %u", snapshot.trafficResetDay);
+}
 }  // namespace
 
 void displayInit() {
@@ -201,12 +309,26 @@ void displayMessage(const String &title, const String &message, uint16_t color) 
     tft.setTextWrap(false);
 }
 
-void displaySnapshot(const ServerSnapshot &snapshot, size_t index, size_t total,
-                     uint8_t page, const String &notice) {
-    tft.fillScreen(TFT_BLACK);
-    drawHeader(snapshot, index, total);
-    if (page == 0) drawSummary(snapshot);
-    else drawNetwork(snapshot);
-    drawFooter(page, notice);
+uint8_t displayPageCount(const ServerSnapshot &snapshot) {
+    return snapshot.hasPlanMetrics ? 5 : 4;
 }
 
+void displayMonitor(const std::vector<ServerSnapshot> &snapshots, size_t index,
+                    uint8_t page, const String &notice) {
+    if (snapshots.empty()) return;
+    if (index >= snapshots.size()) index = 0;
+    const ServerSnapshot &snapshot = snapshots[index];
+    const uint8_t pages = displayPageCount(snapshot);
+    if (page >= pages) page = 0;
+    tft.fillScreen(TFT_BLACK);
+    if (page == 0) {
+        drawOverview(snapshots, index);
+    } else {
+        drawHeader(snapshot, index, snapshots.size());
+        if (page == 1) drawSummary(snapshot);
+        else if (page == 2) drawNetwork(snapshot);
+        else if (page == 3) drawAdvanced(snapshot);
+        else drawPlan(snapshot);
+    }
+    drawFooter(page, notice);
+}
