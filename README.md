@@ -9,19 +9,22 @@
 - Nezha Monitor v1：`GET /api/v1/server`
 - CF-Server-Monitor-Pro：`GET /api/server?id=...`
 
-基础版已在 ESP32-WROVER-B 小喵掌机上完成 Launcher 启动、NVS 配置、2.4 GHz Wi-Fi、
-HTTPS 证书校验和哪吒接口实机验证。`v1.1.0` 在此基础上增加巡检交互和扩展指标；
-发布前已完成构建和镜像静态验证，实机交互验证状态见下文。
+固件已在 ESP32-WROVER-B 小喵掌机上完成 Launcher 启动、NVS 配置、2.4 GHz Wi-Fi、
+HTTPS 证书校验和哪吒接口实机验证。`v1.2.0` 增加设备诊断、流量预测、本地趋势图和
+固定按键语义，并将节点上限提高到 128；发布包的详细验证状态见下文。
 
 ## 功能
 
-- 总览最多显示 32 台服务器，明确高亮当前选择并显示在线数量
+- 总览最多加载 128 台服务器，明确高亮当前选择并显示在线数量
 - 显示 CPU、内存、磁盘、Swap、1/5/15 分钟负载和运行时间
 - 显示进程、TCP/UDP 连接、温度、虚拟化、实时速度和累计流量
-- CF-Server-Monitor-Pro 显示月流量、套餐额度、重置日和到期天数
+- CF-Server-Monitor-Pro 显示月流量、套餐额度、周期预测、重置日和到期天数
+- 每台服务器保存最近 24 次成功刷新的 CPU、内存和网络趋势，重启后重新采集
+- 设备诊断页显示 Wi-Fi、IP、请求耗时、上次刷新、Heap、PSRAM 和设备运行时间
 - CPU、内存、磁盘和离线状态支持持续超限本地告警
 - 配置网页可测试 Wi-Fi、URL、TLS/HTTP、认证、JSON 和节点发现，不保存配置
 - 总览与详情分离，刷新后按服务器 ID 保持当前选择
+- A 在所有监控页面固定为刷新，B 固定为返回或退出，底栏提示按实际像素宽度适配
 - 使用设备热点和手机网页完成首次配置
 - Wi-Fi、面板地址和 Token 保存到 ESP32 NVS，不依赖 TF 卡数据分区
 - HTTPS 使用公共根证书包校验证书，不调用 `setInsecure()`
@@ -41,32 +44,32 @@ HTTPS 证书校验和哪吒接口实机验证。`v1.1.0` 在此基础上增加�
 
 ## 安装
 
-从 [v1.1.0 Release](https://github.com/sym090701/xiaomiao-vps-monitor/releases/tag/v1.1.0)
+从 [v1.2.0 Release](https://github.com/sym090701/xiaomiao-vps-monitor/releases/tag/v1.2.0)
 选择与安装方式匹配的 BIN：
 
 | 安装方式 | 发布包 | 是否保留 Launcher | 写入方式 |
 | --- | --- | --- | --- |
-| Launcher 共存（推荐） | [`XiaoMiao-VPS-Monitor-v1.1.0-Launcher.bin`](https://github.com/sym090701/xiaomiao-vps-monitor/releases/download/v1.1.0/XiaoMiao-VPS-Monitor-v1.1.0-Launcher.bin) | 是 | TF 卡 `/boot/` |
-| 完整 4 MB 直刷 | [`XiaoMiao-VPS-Monitor-v1.1.0-Full-4MB.bin`](https://github.com/sym090701/xiaomiao-vps-monitor/releases/download/v1.1.0/XiaoMiao-VPS-Monitor-v1.1.0-Full-4MB.bin) | 否 | esptool，地址 `0x0` |
+| Launcher 共存（推荐） | [`XiaoMiao-VPS-Monitor-v1.2.0-Launcher.bin`](https://github.com/sym090701/xiaomiao-vps-monitor/releases/download/v1.2.0/XiaoMiao-VPS-Monitor-v1.2.0-Launcher.bin) | 是 | TF 卡 `/boot/` |
+| 完整 4 MB 直刷 | [`XiaoMiao-VPS-Monitor-v1.2.0-Full-4MB.bin`](https://github.com/sym090701/xiaomiao-vps-monitor/releases/download/v1.2.0/XiaoMiao-VPS-Monitor-v1.2.0-Full-4MB.bin) | 否 | esptool，地址 `0x0` |
 
 两个 BIN 不能混用刷写方式。Release 同时提供 `SHA256SUMS`，下载后应先核验文件。
 
 ```text
-8593144d6ce0767429302eae4ec2c9513230a4b13aab6239061f4dcb821febf8  XiaoMiao-VPS-Monitor-v1.1.0-Launcher.bin
-1ff98be69dee433389e83d041c602a6105ebb896c90bc71b4ce715fdd9c11a8b  XiaoMiao-VPS-Monitor-v1.1.0-Full-4MB.bin
+7e14102c65553998f803cde5d09d5c0f24d56a3cc32027717bccdf938b7e9adf  XiaoMiao-VPS-Monitor-v1.2.0-Launcher.bin
+205e862dffe1df853eea8e436f78c5f7025f3b67d0b4b7b339a5162bea086403  XiaoMiao-VPS-Monitor-v1.2.0-Full-4MB.bin
 ```
 
 ### Launcher 共存安装
 
-1. 下载 `XiaoMiao-VPS-Monitor-v1.1.0-Launcher.bin`。
+1. 下载 `XiaoMiao-VPS-Monitor-v1.2.0-Launcher.bin`。
 2. 将 BIN 复制到 TF 卡 `/boot/`。
 3. 开机进入 Launcher，打开 `/boot/`，选择 BIN 并确认安装。
 4. 首次启动后按屏幕提示完成配网。
 
 > [!WARNING]
 > 共存包中的 BIN 是应用镜像。不要用 esptool 将它写入 `0x0` 或 `0x10000`，否则会
-> 覆盖启动程序或 Launcher。`v1.1.0` 至少需要 `0x120000`（1152 KiB）应用槽位；
-> 当前 BIN 为 `1131904` 字节，在该槽位剩余 `47744` 字节；其他设备以实际 Launcher
+> 覆盖启动程序或 Launcher。`v1.2.0` 至少需要 `0x120000`（1152 KiB）应用槽位；
+> 当前 BIN 为 `1143184` 字节，在该槽位剩余 `36464` 字节；其他设备以实际 Launcher
 > 分区管理结果为准。
 
 ### 完整 4 MB 直刷
@@ -91,7 +94,7 @@ HTTPS 证书校验和哪吒接口实机验证。`v1.1.0` 在此基础上增加�
 
    ```bash
    python3 -m esptool --chip esp32 --port /dev/cu.usbmodemXXXX --baud 115200 \
-     write_flash --flash_size 4MB 0x0 XiaoMiao-VPS-Monitor-v1.1.0-Full-4MB.bin
+     write_flash --flash_size 4MB 0x0 XiaoMiao-VPS-Monitor-v1.2.0-Full-4MB.bin
    ```
 
    Windows 将 `python3` 和串口名分别替换为 `py`、`COM3`。
@@ -106,16 +109,19 @@ python3 -m esptool --chip esp32 --port /dev/cu.usbmodemXXXX --baud 115200 \
 ```
 
 > [!CAUTION]
-> 只有完整 4 MB 文件 `XiaoMiao-VPS-Monitor-v1.1.0-Full-4MB.bin` 才能从 `0x0` 写入。
+> 只有完整 4 MB 文件 `XiaoMiao-VPS-Monitor-v1.2.0-Full-4MB.bin` 才能从 `0x0` 写入。
 > 刷写前确认备份文件大小为 `4194304` 字节，并将备份另存到电脑或其他磁盘。
 
 ### 发布包验证状态
 
-- `v1.1.0` Launcher BIN 与本仓库标签源码构建结果一致，镜像结构和槽位尺寸已验证；
-  新交互尚未记录实体机验证。
-- 完整 4 MB 镜像已验证尺寸、组件偏移、分区表、SHA256 和无预置凭据；该完整镜像
-  尚未执行破坏性的实机整片刷写。
-- CF-Server-Monitor-Pro 支持已完成源码、构建和接口契约检查，尚未记录实机后端验证。
+- `v1.2.0` Launcher BIN 已完成镜像结构、SHA256 和 `0x120000` 槽位尺寸验证；同一功能
+  分支的开发构建已在实体小喵上验证 Launcher 启动、哪吒 HTTPS 请求、34 台服务器加载
+  和返回 Launcher。
+- 完整 4 MB 镜像已验证固定尺寸、组件偏移、分区表、空 NVS、SHA256 和无预置凭据；
+  内嵌应用与 Launcher BIN 逐字节一致，但该完整镜像尚未执行破坏性的实机整片刷写。
+- CF-Server-Monitor-Pro 的流量预测已完成源码、构建和接口契约检查，尚未记录实机后端验证。
+- 诊断页右键返回和底栏像素适配已随开发构建刷入；最终正式镜像已完成构建，发布前未
+  单独记录按键录像。
 
 ## 首次配置
 
@@ -148,17 +154,23 @@ CF-Server-Monitor-Pro 当前没有节点列表 JSON API，显式填写 ID 更稳
 
 ## 按键
 
+`A` 在所有监控页面固定为刷新；`B` 固定为返回上一级，位于总览时退出到 Launcher。
+
 | 按键 | 功能 |
 | --- | --- |
-| 总览：上 / 下（左 / 右也可） | 选择服务器，到首尾停止 |
-| 总览：A | 进入所选服务器详情 |
-| 总览：短按 B | 立即刷新 |
+| 总览：上 / 下 | 选择服务器，到首尾停止 |
+| 总览：左 | 打开设备诊断页 |
+| 总览：右 | 打开所选服务器详情 |
+| 总览：A | 立即刷新 |
+| 总览：短按 B | 返回 Launcher；仅共存安装可用 |
 | 详情：左 / 右 | 循环切换服务器 |
-| 详情：上 / 下 | 切换资源、网络、高级指标和可用的 CF 套餐页 |
+| 详情：上 / 下 | 循环切换资源、网络、高级指标、可用的 CF 套餐页和趋势图 |
 | 详情：A | 立即刷新 |
 | 详情：短按 B | 返回总览 |
+| 设备诊断：右或短按 B | 返回总览 |
+| 设备诊断：A | 立即刷新 |
 | 长按 B 1.5 秒 | 开启配置热点 |
-| 长按 A+B 1.5 秒 | 重启；共存安装可随后按 Launcher 提示返回主界面 |
+| 长按 A+B 1.5 秒 | 重启当前应用 |
 
 ## 编译
 
@@ -235,7 +247,9 @@ platformio.ini 固定的构建环境和依赖
   HTTPS 或后端请求阶段，而不是配网。
 - `Invalid mbox`：必须在启动 WebServer 前初始化 Arduino Wi-Fi/LwIP。
 - `TG1WDT_SYS_RESET` 出现在 `setCACertBundle()`：检查证书包是否误用了 ESP-IDF 5.x 格式。
-- 共存安装无法返回 Launcher：重启后按照 Launcher 启动画面提示按键，不要重刷整机镜像。
+- 共存安装在总览短按 B 无法返回 Launcher：检查 Launcher 分区是否仍为 `APP_TEST` 类型；
+  不要把应用 BIN 写到 `0x0` 或 `0x10000`。
+- 完整直刷版在总览短按 B 显示 `EXIT FAILED`：这是没有 Launcher 分区时的预期行为。
 - 直刷后没有 Launcher：这是完整 4 MB 包的预期行为；如需恢复，写回刷机前的 4 MB 备份。
 
 ## 后端项目

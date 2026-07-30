@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <time.h>
 
+#include "traffic_forecast.h"
+
 namespace {
 TFT_eSPI tft;
 
@@ -13,29 +15,45 @@ String clipped(String value, size_t maxChars) {
     return value.substring(0, maxChars - 1) + "~";
 }
 
+String fitPixels(String value, int maxWidth) {
+    if (tft.textWidth(value) <= maxWidth) return value;
+    while (value.length() && tft.textWidth(value + "~") > maxWidth) {
+        value.remove(value.length() - 1);
+    }
+    return value + "~";
+}
+
 void drawHeader(const ServerSnapshot &snapshot, size_t index, size_t total) {
     tft.fillRect(0, 0, 160, 18, TFT_NAVY);
     const uint16_t statusColor = snapshot.online ? TFT_GREEN : TFT_RED;
     tft.fillCircle(7, 8, 4, statusColor);
+    const String counter = String(index + 1) + "/" + String(total);
+    const int counterX = tft.width() - 4 - tft.textWidth(counter);
     tft.setTextColor(TFT_WHITE, TFT_NAVY);
     tft.setCursor(15, 4);
-    tft.print(clipped(snapshot.name, 17));
+    tft.print(fitPixels(snapshot.name, counterX - 19));
     tft.setTextColor(TFT_CYAN, TFT_NAVY);
-    tft.setCursor(132, 4);
-    tft.printf("%u/%u", static_cast<unsigned>(index + 1), static_cast<unsigned>(total));
+    tft.setCursor(counterX, 4);
+    tft.print(counter);
 }
 
-void drawFooter(uint8_t page, const String &notice) {
+void drawFooter(MonitorPage page, const String &notice) {
     tft.fillRect(0, 116, 160, 12, TFT_DARKGREY);
+    tft.setTextSize(1);
+    tft.setTextWrap(false);
     tft.setTextColor(TFT_WHITE, TFT_DARKGREY);
     tft.setCursor(3, 118);
+    String text;
     if (notice.length()) {
-        tft.print(clipped(notice, 25));
-    } else if (page == 0) {
-        tft.print("UD:N  A:OPEN  B:REF");
+        text = notice;
+    } else if (page == MonitorPage::Overview) {
+        text = "UD:N <:D >:OPEN A:R B:X";
+    } else if (page == MonitorPage::Diagnostics) {
+        text = ">:BACK A:R B:BACK";
     } else {
-        tft.print("LR:N UD:P A:REF B:BACK");
+        text = "LR:N UD:P A:R B:BACK";
     }
+    tft.print(fitPixels(text, tft.width() - 6));
 }
 
 void drawBar(int y, const char *label, float value, uint16_t color) {
@@ -76,6 +94,13 @@ String ageText(int64_t epoch) {
     if (age < 60) return String(age) + "s ago";
     if (age < 3600) return String(age / 60) + "m ago";
     return String(age / 3600) + "h ago";
+}
+
+String durationText(uint32_t seconds) {
+    if (seconds < 60) return String(seconds) + "s";
+    if (seconds < 3600) return String(seconds / 60) + "m";
+    if (seconds < 86400) return String(seconds / 3600) + "h " + String((seconds % 3600) / 60) + "m";
+    return String(seconds / 86400) + "d " + String((seconds % 86400) / 3600) + "h";
 }
 
 void drawSummary(const ServerSnapshot &snapshot) {
@@ -155,9 +180,10 @@ void drawOverview(const std::vector<ServerSnapshot> &snapshots, size_t selected)
     tft.setTextColor(TFT_WHITE, TFT_NAVY);
     tft.setCursor(5, 4);
     tft.print("FLEET OVERVIEW");
+    const String counter = String(online) + "/" + String(snapshots.size());
     tft.setTextColor(online == snapshots.size() ? TFT_GREEN : TFT_YELLOW, TFT_NAVY);
-    tft.setCursor(124, 4);
-    tft.printf("%u/%u", static_cast<unsigned>(online), static_cast<unsigned>(snapshots.size()));
+    tft.setCursor(tft.width() - 4 - tft.textWidth(counter), 4);
+    tft.print(counter);
 
     const size_t visible = std::min<size_t>(5, snapshots.size());
     size_t first = 0;
@@ -226,30 +252,138 @@ void drawAdvanced(const ServerSnapshot &snapshot) {
 
 void drawPlan(const ServerSnapshot &snapshot) {
     const uint64_t used = snapshot.monthlyNetIn + snapshot.monthlyNetOut;
+    const TrafficForecast forecast = calculateTrafficForecast(
+        used, snapshot.trafficLimitBytes, snapshot.trafficResetDay, time(nullptr));
     tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-    tft.setCursor(5, 27); tft.print("MONTH RX");
+    tft.setCursor(5, 24); tft.print("USED");
     tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    tft.setCursor(67, 27); tft.print(formatBytes(snapshot.monthlyNetIn));
+    tft.setCursor(37, 24); tft.print(formatBytes(used));
     tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-    tft.setCursor(5, 43); tft.print("MONTH TX");
+    tft.print(" / ");
     tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    tft.setCursor(67, 43); tft.print(formatBytes(snapshot.monthlyNetOut));
-    tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-    tft.setCursor(5, 59); tft.print("QUOTA");
-    tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    tft.setCursor(67, 59);
-    tft.print(snapshot.trafficLimitBytes ? formatBytes(snapshot.trafficLimitBytes) : clipped(snapshot.trafficLimitText.length() ? snapshot.trafficLimitText : "--", 14));
+    tft.print(snapshot.trafficLimitBytes ? formatBytes(snapshot.trafficLimitBytes)
+                                        : clipped(snapshot.trafficLimitText.length() ? snapshot.trafficLimitText : "--", 10));
     if (snapshot.trafficLimitBytes) {
-        drawBar(76, "USE", std::min(100.0f, static_cast<float>(used) * 100.0f / snapshot.trafficLimitBytes), TFT_MAGENTA);
+        drawBar(39, "USE", std::min(100.0f, static_cast<float>(used) * 100.0f /
+                                             snapshot.trafficLimitBytes), TFT_MAGENTA);
     }
     tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-    tft.setCursor(5, 94); tft.print("EXPIRE");
+    tft.setCursor(5, 57); tft.print("PROJECT");
     tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    tft.setCursor(54, 94); tft.print(clipped(snapshot.expiryDate.length() ? snapshot.expiryDate : "--", 17));
+    tft.setCursor(58, 57);
+    tft.print(forecast.valid ? formatBytes(forecast.projectedBytes) : "--");
     tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-    tft.setCursor(5, 107);
-    if (snapshot.expiryDays != INT32_MIN) tft.printf("LEFT %ldd  RESET %u", static_cast<long>(snapshot.expiryDays), snapshot.trafficResetDay);
-    else tft.printf("LEFT --  RESET %u", snapshot.trafficResetDay);
+    tft.setCursor(5, 72); tft.print("QUOTA LEFT");
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.setCursor(72, 72);
+    if (!forecast.valid || forecast.quotaDaysLeft < 0) tft.print("--");
+    else tft.printf("%dd", forecast.quotaDaysLeft);
+    tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+    tft.setCursor(5, 87); tft.print("CYCLE");
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.setCursor(42, 87);
+    if (forecast.valid) tft.printf("%u/%ud", forecast.elapsedDays, forecast.cycleDays);
+    else tft.print("--");
+    tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+    tft.setCursor(96, 87); tft.print("RESET");
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.setCursor(132, 87); tft.print(snapshot.trafficResetDay ? String(snapshot.trafficResetDay) : "--");
+    tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+    tft.setCursor(5, 102); tft.print("EXPIRE LEFT");
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.setCursor(78, 102);
+    if (snapshot.expiryDays != INT32_MIN) tft.printf("%ldd", static_cast<long>(snapshot.expiryDays));
+    else tft.print("--");
+}
+
+uint8_t trendIndex(const ServerTrends &trends, uint8_t position) {
+    const uint8_t first = trends.count == TREND_SAMPLE_COUNT ? trends.next : 0;
+    return (first + position) % TREND_SAMPLE_COUNT;
+}
+
+int chartY(float value, float scale, int top, int height) {
+    value = constrain(value, 0.0f, scale);
+    return top + height - 2 - static_cast<int>(value * (height - 3) / scale);
+}
+
+void drawTrends(const ServerTrends *trends) {
+    if (!trends || trends->count < 2) {
+        tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+        tft.setCursor(18, 53);
+        tft.print("COLLECTING SAMPLES");
+        tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+        tft.setCursor(47, 71);
+        tft.printf("%u / %u ready", trends ? trends->count : 0, TREND_SAMPLE_COUNT);
+        return;
+    }
+
+    tft.setTextColor(TFT_CYAN, TFT_BLACK);
+    tft.setCursor(5, 21); tft.print("CPU");
+    tft.setTextColor(TFT_GREEN, TFT_BLACK);
+    tft.setCursor(31, 21); tft.print("RAM");
+    tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+    tft.setCursor(113, 21); tft.printf("%u pts", trends->count);
+    constexpr int chartX = 4;
+    constexpr int chartWidth = 152;
+    constexpr int resourceTop = 31;
+    constexpr int resourceHeight = 32;
+    tft.drawRect(chartX, resourceTop, chartWidth, resourceHeight, TFT_DARKGREY);
+    tft.drawFastHLine(chartX + 1, resourceTop + resourceHeight / 2,
+                      chartWidth - 2, TFT_DARKGREY);
+
+    uint64_t networkPeak = 1;
+    for (uint8_t i = 0; i < trends->count; i++) {
+        networkPeak = std::max(networkPeak, trends->network[trendIndex(*trends, i)]);
+    }
+    tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+    tft.setCursor(5, 68); tft.print("NET");
+    tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+    tft.setCursor(70, 68); tft.print("PEAK ");
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.print(formatBytes(networkPeak, true));
+    constexpr int networkTop = 79;
+    constexpr int networkHeight = 32;
+    tft.drawRect(chartX, networkTop, chartWidth, networkHeight, TFT_DARKGREY);
+
+    for (uint8_t i = 1; i < trends->count; i++) {
+        const uint8_t previous = trendIndex(*trends, i - 1);
+        const uint8_t current = trendIndex(*trends, i);
+        const int x1 = chartX + 1 + (i - 1) * (chartWidth - 3) / (trends->count - 1);
+        const int x2 = chartX + 1 + i * (chartWidth - 3) / (trends->count - 1);
+        tft.drawLine(x1, chartY(trends->cpu[previous], 100.0f, resourceTop, resourceHeight),
+                     x2, chartY(trends->cpu[current], 100.0f, resourceTop, resourceHeight), TFT_CYAN);
+        tft.drawLine(x1, chartY(trends->memory[previous], 100.0f, resourceTop, resourceHeight),
+                     x2, chartY(trends->memory[current], 100.0f, resourceTop, resourceHeight), TFT_GREEN);
+        tft.drawLine(x1, chartY(static_cast<float>(trends->network[previous]),
+                                static_cast<float>(networkPeak), networkTop, networkHeight),
+                     x2, chartY(static_cast<float>(trends->network[current]),
+                                static_cast<float>(networkPeak), networkTop, networkHeight), TFT_YELLOW);
+    }
+}
+
+void drawDiagnostics(const DeviceDiagnostics &diagnostics) {
+    tft.fillRect(0, 0, 160, 18, TFT_NAVY);
+    tft.setTextColor(TFT_WHITE, TFT_NAVY);
+    tft.setCursor(5, 4);
+    tft.print("DEVICE DIAGNOSTICS");
+
+    auto line = [](int y, const char *label, const String &value, uint16_t color = TFT_WHITE) {
+        tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+        tft.setCursor(5, y); tft.print(label);
+        tft.setTextColor(color, TFT_BLACK);
+        tft.setCursor(54, y); tft.print(clipped(value, 17));
+    };
+    line(22, "FW", FIRMWARE_VERSION, TFT_CYAN);
+    line(34, "WIFI", diagnostics.wifiConnected
+                         ? "OK " + String(diagnostics.wifiRssi) + "dBm" : "OFFLINE",
+         diagnostics.wifiConnected ? TFT_GREEN : TFT_RED);
+    line(46, "IP", diagnostics.localIp.length() ? diagnostics.localIp : "--");
+    line(58, "REQUEST", String(diagnostics.requestDurationMs) + "ms");
+    line(70, "REFRESH", diagnostics.lastRefreshAgeSeconds == UINT32_MAX
+                            ? "--" : durationText(diagnostics.lastRefreshAgeSeconds) + " ago");
+    line(82, "HEAP", formatBytes(diagnostics.freeHeap));
+    line(94, "PSRAM", formatBytes(diagnostics.freePsram));
+    line(106, "UPTIME", durationText(diagnostics.deviceUptimeSeconds));
 }
 }  // namespace
 
@@ -309,26 +443,45 @@ void displayMessage(const String &title, const String &message, uint16_t color) 
     tft.setTextWrap(false);
 }
 
-uint8_t displayPageCount(const ServerSnapshot &snapshot) {
-    return snapshot.hasPlanMetrics ? 5 : 4;
+bool displayPageAvailable(const ServerSnapshot &snapshot, MonitorPage page) {
+    return page != MonitorPage::Plan || snapshot.hasPlanMetrics;
+}
+
+MonitorPage displayAdjacentPage(const ServerSnapshot &snapshot, MonitorPage current,
+                                int direction) {
+    constexpr int first = static_cast<int>(MonitorPage::Summary);
+    constexpr int last = static_cast<int>(MonitorPage::Trends);
+    const int step = direction < 0 ? -1 : 1;
+    int candidate = static_cast<int>(current);
+    for (int attempts = 0; attempts <= last - first; attempts++) {
+        candidate += step;
+        if (candidate < first) candidate = last;
+        if (candidate > last) candidate = first;
+        const auto page = static_cast<MonitorPage>(candidate);
+        if (displayPageAvailable(snapshot, page)) return page;
+    }
+    return current;
 }
 
 void displayMonitor(const std::vector<ServerSnapshot> &snapshots, size_t index,
-                    uint8_t page, const String &notice) {
+                    MonitorPage page, const ServerTrends *trends,
+                    const DeviceDiagnostics &diagnostics, const String &notice) {
     if (snapshots.empty()) return;
     if (index >= snapshots.size()) index = 0;
     const ServerSnapshot &snapshot = snapshots[index];
-    const uint8_t pages = displayPageCount(snapshot);
-    if (page >= pages) page = 0;
+    if (!displayPageAvailable(snapshot, page)) page = MonitorPage::Advanced;
     tft.fillScreen(TFT_BLACK);
-    if (page == 0) {
+    if (page == MonitorPage::Overview) {
         drawOverview(snapshots, index);
+    } else if (page == MonitorPage::Diagnostics) {
+        drawDiagnostics(diagnostics);
     } else {
         drawHeader(snapshot, index, snapshots.size());
-        if (page == 1) drawSummary(snapshot);
-        else if (page == 2) drawNetwork(snapshot);
-        else if (page == 3) drawAdvanced(snapshot);
-        else drawPlan(snapshot);
+        if (page == MonitorPage::Summary) drawSummary(snapshot);
+        else if (page == MonitorPage::Network) drawNetwork(snapshot);
+        else if (page == MonitorPage::Advanced) drawAdvanced(snapshot);
+        else if (page == MonitorPage::Plan) drawPlan(snapshot);
+        else if (page == MonitorPage::Trends) drawTrends(trends);
     }
     drawFooter(page, notice);
 }

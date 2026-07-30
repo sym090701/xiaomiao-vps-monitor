@@ -13,7 +13,7 @@ extern const uint8_t rootca_crt_bundle_start[] asm("_binary_data_cert_x509_crt_b
 
 namespace {
 constexpr size_t MAX_RESPONSE_BYTES = 512 * 1024;
-constexpr size_t MAX_SERVERS = 32;
+constexpr size_t MAX_SERVERS = 128;
 
 String trimBaseUrl(String url) {
     url.trim();
@@ -58,7 +58,7 @@ bool httpGet(const String &url, const String &authorization, String &body,
     http.setTimeout(12000);
     // Never forward a monitoring credential to a redirect target.
     http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
-    http.setUserAgent("XiaoMiao-VPS-Monitor/1.1");
+    http.setUserAgent("XiaoMiao-VPS-Monitor/" + String(FIRMWARE_VERSION));
 
     bool begun = false;
     WiFiClient plainClient;
@@ -260,6 +260,7 @@ FetchResult fetchNezha(const AppConfig &config) {
     }
 
     JsonArrayConst data = doc["data"].as<JsonArrayConst>();
+    result.servers.reserve(std::min<size_t>(data.size(), MAX_SERVERS));
     for (JsonObjectConst server : data) {
         if (result.servers.size() >= MAX_SERVERS) break;
         ServerSnapshot snapshot;

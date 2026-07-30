@@ -8,6 +8,19 @@ enum class BackendType : uint8_t {
     CfServerMonitor = 1,
 };
 
+enum class MonitorPage : uint8_t {
+    Overview = 0,
+    Summary,
+    Network,
+    Advanced,
+    Plan,
+    Trends,
+    Diagnostics,
+};
+
+constexpr uint8_t TREND_SAMPLE_COUNT = 24;
+constexpr char FIRMWARE_VERSION[] = "1.2.0";
+
 struct AppConfig {
     String wifiSsid;
     String wifiPassword;
@@ -63,6 +76,26 @@ struct ServerSnapshot {
     int64_t lastActiveEpoch = 0;
     bool hasAdvancedMetrics = false;
     bool hasPlanMetrics = false;
+};
+
+struct ServerTrends {
+    String id;
+    uint8_t count = 0;
+    uint8_t next = 0;
+    float cpu[TREND_SAMPLE_COUNT]{};
+    float memory[TREND_SAMPLE_COUNT]{};
+    uint64_t network[TREND_SAMPLE_COUNT]{};
+};
+
+struct DeviceDiagnostics {
+    bool wifiConnected = false;
+    int32_t wifiRssi = 0;
+    String localIp;
+    uint32_t requestDurationMs = 0;
+    uint32_t lastRefreshAgeSeconds = UINT32_MAX;
+    uint32_t freeHeap = 0;
+    uint32_t freePsram = 0;
+    uint32_t deviceUptimeSeconds = 0;
 };
 
 struct FetchResult {

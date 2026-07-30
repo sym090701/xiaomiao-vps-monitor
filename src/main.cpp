@@ -2,6 +2,8 @@
 #include <TFT_eSPI.h>
 #include <WiFi.h>
 #include <esp_heap_caps.h>
+#include <esp_ota_ops.h>
+#include <esp_timer.h>
 #include <time.h>
 #include <algorithm>
 
@@ -15,11 +17,14 @@
 namespace {
 AppConfig config;
 std::vector<ServerSnapshot> snapshots;
+std::vector<ServerTrends> trendStores;
 String fetchNotice;
 String alertNotice;
 size_t selectedServer = 0;
-uint8_t selectedPage = 0;
+MonitorPage selectedPage = MonitorPage::Overview;
 uint32_t lastFetchAt = 0;
+uint32_t lastSuccessfulRefreshAt = 0;
+uint32_t lastRequestDurationMs = 0;
 uint32_t lastScreenRedraw = 0;
 uint32_t lastReconnectAttempt = 0;
 uint8_t lastWifiDisconnectReason = 0;
@@ -95,17 +100,66 @@ bool connectWifi() {
     return true;
 }
 
+ServerTrends *findTrends(const String &id) {
+    const auto found = std::find_if(trendStores.begin(), trendStores.end(),
+                                    [&](const ServerTrends &trends) { return trends.id == id; });
+    return found == trendStores.end() ? nullptr : &*found;
+}
+
+void recordTrendSamples() {
+    for (const auto &snapshot : snapshots) {
+        ServerTrends *trends = findTrends(snapshot.id);
+        if (!trends) {
+            trendStores.push_back(ServerTrends{});
+            trends = &trendStores.back();
+            trends->id = snapshot.id;
+        }
+        const uint8_t slot = trends->next;
+        trends->cpu[slot] = snapshot.cpuPercent;
+        trends->memory[slot] = snapshot.memoryPercent;
+        trends->network[slot] = UINT64_MAX - snapshot.netInSpeed < snapshot.netOutSpeed
+                                    ? UINT64_MAX
+                                    : snapshot.netInSpeed + snapshot.netOutSpeed;
+        trends->next = (slot + 1) % TREND_SAMPLE_COUNT;
+        if (trends->count < TREND_SAMPLE_COUNT) trends->count++;
+    }
+    trendStores.erase(std::remove_if(trendStores.begin(), trendStores.end(), [&](const ServerTrends &trends) {
+        return std::none_of(snapshots.begin(), snapshots.end(),
+                            [&](const ServerSnapshot &snapshot) { return snapshot.id == trends.id; });
+    }), trendStores.end());
+}
+
+DeviceDiagnostics currentDiagnostics() {
+    DeviceDiagnostics diagnostics;
+    diagnostics.wifiConnected = WiFi.status() == WL_CONNECTED;
+    if (diagnostics.wifiConnected) {
+        diagnostics.wifiRssi = WiFi.RSSI();
+        diagnostics.localIp = WiFi.localIP().toString();
+    }
+    diagnostics.requestDurationMs = lastRequestDurationMs;
+    if (lastSuccessfulRefreshAt) {
+        diagnostics.lastRefreshAgeSeconds = (millis() - lastSuccessfulRefreshAt) / 1000;
+    }
+    diagnostics.freeHeap = ESP.getFreeHeap();
+    diagnostics.freePsram = ESP.getFreePsram();
+    diagnostics.deviceUptimeSeconds = static_cast<uint32_t>(esp_timer_get_time() / 1000000ULL);
+    return diagnostics;
+}
+
 void redrawSnapshot() {
     if (snapshots.empty()) return;
     if (selectedServer >= snapshots.size()) selectedServer = 0;
-    const uint8_t pages = displayPageCount(snapshots[selectedServer]);
-    if (selectedPage >= pages) selectedPage = pages - 1;
+    if (!displayPageAvailable(snapshots[selectedServer], selectedPage)) {
+        selectedPage = MonitorPage::Advanced;
+    }
     String notice = alertNotice.length() ? alertNotice : fetchNotice;
     if (fetchNotice.startsWith("STALE:")) {
         notice = fetchNotice;
         if (alertNotice.length()) notice += " + ALERT";
     }
-    displayMonitor(snapshots, selectedServer, selectedPage, notice);
+    const ServerTrends *trends = findTrends(snapshots[selectedServer].id);
+    displayMonitor(snapshots, selectedServer, selectedPage, trends,
+                   currentDiagnostics(), notice);
     lastScreenRedraw = millis();
 }
 
@@ -197,7 +251,9 @@ void refreshData() {
     else displayBoot("Fetching VPS data", config.backend == BackendType::Nezha ? "Nezha" : "CF Server Monitor", "Please wait...");
 
     Serial.println("Monitor fetch: start");
+    const uint32_t requestStartedAt = millis();
     FetchResult result = fetchServerSnapshots(config);
+    lastRequestDurationMs = millis() - requestStartedAt;
     Serial.println("Monitor fetch: returned");
     lastFetchAt = millis();
     refreshRequested = false;
@@ -217,11 +273,13 @@ void refreshData() {
                 selectedServer = static_cast<size_t>(selected - snapshots.begin());
             }
         }
+        recordTrendSamples();
+        lastSuccessfulRefreshAt = millis();
         fetchNotice = result.error;
         const int newAlertIndex = evaluateAlerts();
         if (newAlertIndex >= 0 && millis() - lastUserInputAt >= 3000) {
             selectedServer = static_cast<size_t>(newAlertIndex);
-            selectedPage = 0;
+            selectedPage = MonitorPage::Overview;
         }
         redrawSnapshot();
         Serial.printf("Monitor refresh: %u server(s), free heap %u, free PSRAM %u\n",
@@ -243,36 +301,73 @@ void refreshData() {
 
 void selectServer(int direction) {
     if (snapshots.empty()) return;
-    if (selectedPage == 0) {
+    if (selectedPage == MonitorPage::Diagnostics) return;
+    if (selectedPage == MonitorPage::Overview) {
         if (direction < 0 && selectedServer > 0) selectedServer--;
         if (direction > 0 && selectedServer + 1 < snapshots.size()) selectedServer++;
     } else {
         selectedServer = direction < 0
                              ? (selectedServer + snapshots.size() - 1) % snapshots.size()
                              : (selectedServer + 1) % snapshots.size();
-        const uint8_t pages = displayPageCount(snapshots[selectedServer]);
-        if (selectedPage >= pages) selectedPage = pages - 1;
-        if (selectedPage == 0) selectedPage = 1;
+        if (!displayPageAvailable(snapshots[selectedServer], selectedPage)) {
+            selectedPage = MonitorPage::Advanced;
+        }
     }
     redrawSnapshot();
 }
 
-void handleShortA() {
-    if (!snapshots.empty() && selectedPage == 0) {
-        selectedPage = 1;
-        redrawSnapshot();
-    } else {
-        refreshRequested = true;
+void returnToLauncher() {
+    const esp_partition_t *launcher = esp_partition_find_first(
+        ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_TEST, nullptr);
+    if (!launcher) {
+        Serial.println("Launcher exit failed: APP_TEST partition not found");
+        displayMessage("EXIT FAILED", "Launcher partition was not found.", TFT_RED);
+        return;
     }
+
+    const esp_err_t result = esp_ota_set_boot_partition(launcher);
+    if (result != ESP_OK) {
+        Serial.printf("Launcher exit failed: esp_ota_set_boot_partition=%d\n",
+                      static_cast<int>(result));
+        displayMessage("EXIT FAILED", "Could not select Launcher partition.", TFT_RED);
+        return;
+    }
+
+    Serial.printf("Returning to Launcher at 0x%06x\n",
+                  static_cast<unsigned>(launcher->address));
+    displayBoot("Returning to Launcher", "Please wait...");
+    delay(250);
+    ESP.restart();
+}
+
+void handleShortA() {
+    refreshRequested = true;
 }
 
 void handleShortB() {
-    if (!snapshots.empty() && selectedPage != 0) {
-        selectedPage = 0;
+    if (!snapshots.empty() && selectedPage != MonitorPage::Overview) {
+        selectedPage = MonitorPage::Overview;
         redrawSnapshot();
     } else {
-        refreshRequested = true;
+        returnToLauncher();
     }
+}
+
+void handleHorizontal(int direction) {
+    if (snapshots.empty()) return;
+    if (selectedPage == MonitorPage::Diagnostics) {
+        if (direction > 0) {
+            selectedPage = MonitorPage::Overview;
+            redrawSnapshot();
+        }
+        return;
+    }
+    if (selectedPage == MonitorPage::Overview) {
+        selectedPage = direction < 0 ? MonitorPage::Diagnostics : MonitorPage::Summary;
+        redrawSnapshot();
+        return;
+    }
+    selectServer(direction);
 }
 
 void handleButtons() {
@@ -336,21 +431,24 @@ void handleButtons() {
     }
 
     const bool commandButtonDown = current.a || current.b;
-    if (!commandButtonDown && current.left && !previousButtons.left) selectServer(-1);
-    if (!commandButtonDown && current.right && !previousButtons.right) selectServer(1);
+    if (!commandButtonDown && current.left && !previousButtons.left) handleHorizontal(-1);
+    if (!commandButtonDown && current.right && !previousButtons.right) handleHorizontal(1);
     if (!commandButtonDown && current.up && !previousButtons.up && !snapshots.empty()) {
-        if (selectedPage == 0) selectServer(-1);
-        else if (selectedPage > 1) {
-            selectedPage--;
-            redrawSnapshot();
+        if (selectedPage == MonitorPage::Overview) selectServer(-1);
+        else if (selectedPage != MonitorPage::Diagnostics) {
+            const MonitorPage next = displayAdjacentPage(snapshots[selectedServer], selectedPage, -1);
+            if (next != selectedPage) {
+                selectedPage = next;
+                redrawSnapshot();
+            }
         }
     }
     if (!commandButtonDown && current.down && !previousButtons.down && !snapshots.empty()) {
-        if (selectedPage == 0) selectServer(1);
-        else {
-            const uint8_t pages = displayPageCount(snapshots[selectedServer]);
-            if (selectedPage + 1 < pages) {
-                selectedPage++;
+        if (selectedPage == MonitorPage::Overview) selectServer(1);
+        else if (selectedPage != MonitorPage::Diagnostics) {
+            const MonitorPage next = displayAdjacentPage(snapshots[selectedServer], selectedPage, 1);
+            if (next != selectedPage) {
+                selectedPage = next;
                 redrawSnapshot();
             }
         }
@@ -372,7 +470,7 @@ void setup() {
     delay(150);
     initHardwarePins();
     displayInit();
-    displayBoot("Starting firmware", "XiaoMiao ESP32", "VPS Monitor 1.1");
+    displayBoot("Starting firmware", "XiaoMiao ESP32", "VPS Monitor " + String(FIRMWARE_VERSION));
 
     haveCompleteConfig = loadConfig(config);
 
