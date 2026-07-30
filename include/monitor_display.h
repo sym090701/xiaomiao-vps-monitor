@@ -8,6 +8,9 @@ void displayProvisioning(const String &ssid, const String &password, const Strin
 void displayConnecting(const String &ssid);
 void displayRefreshing();
 void displayMessage(const String &title, const String &message, uint16_t color);
-uint8_t displayPageCount(const ServerSnapshot &snapshot);
+bool displayPageAvailable(const ServerSnapshot &snapshot, MonitorPage page);
+MonitorPage displayAdjacentPage(const ServerSnapshot &snapshot, MonitorPage current,
+                                int direction);
 void displayMonitor(const std::vector<ServerSnapshot> &snapshots, size_t index,
-                    uint8_t page, const String &notice = "");
+                    MonitorPage page, const ServerTrends *trends,
+                    const DeviceDiagnostics &diagnostics, const String &notice = "");
